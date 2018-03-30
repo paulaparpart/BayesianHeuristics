@@ -173,7 +173,7 @@ cv.indexing <- function(k, N, percent)
   #set.seed(seed) # For reproducibility of results, only
   # dont use it now for the perm function!
   
-  test.set<- round(percent * N)
+  test.set <- round(percent * N)
   # the size of  a test set is 20% of N
   
   
@@ -196,56 +196,88 @@ cv.indexing <- function(k, N, percent)
 }
 
 
-################# Linear Regression Function ############################################
+################# 3a) Ginv-inverse: Linear Regression Function ############################################
 ##
 # y.pos <- ncol(dataset)
 
-Linear.regression <- function(dataset, cv, y.pos, Predictors) 
+Linear.regression <- function(x, y, test, Predictors, labels) 
 {
   
-  k <- nrow(cv) 
-  pred.linear <- vector('list', k)
-  
-  for (i in 1:k){
-     
-    trainset <- dataset[cv[i,]==1, ] 
-    testset <- dataset[cv[i,]==0, ]   
-    test <- as.matrix(testset[ ,-y.pos]) #  without dependent   
-#     # the actual test items used by the other models for prediction:
-#     indifferent <- apply(test,1,function(x) identical(as.vector(x),rep(0,Predictors)) )
-#     test <- test[!indifferent, ] 
 
-    # cov <- as.matrix(trainset)
-    # cor_mat <- cor(cov,method = "pearson") # redundancy check on trainset
-
-##---------------------- Fitting
-    Xdata <- as.matrix(trainset[ ,1:Predictors])
-    Ydata <- as.matrix(trainset[ ,y.pos]) # just one y vector is enough, no need to duplicate
-    fit <- lm.fit(Xdata,Ydata)   # does not use intercept!
-
-# but intercept is necessary when the classes are not evenly distributed
-# or make even classes of data
-    coef_LR <-fit$coefficients # only 1 row this time, no need to transpose
+    ##---------------------- Fitting --------------
+      X <- x
+      Y <- y 
     
-    ##------------------- Prediction -------------------------------------
-    LR_output <- sign(test  %*%  coef_LR)  #NxPredictors %*% Predictorsx1  = Nx1
     
+    # solve not solvable for lots of redundancies, the same reason that coefficients are NA usually below in fit
+    # ginv() should take care of this problem, 
+      coef_LR <- ginv(t(X)%*%X) %*% (t(X)%*%Y)
 
-#     if (is.na(LR_output[1]) == FALSE){  # only run if it is not NA  (FALSE == FALSE is TRUE)
+    # needs to be exactly consistent with how posterior outcomes matrix is computed 
+      coef_LR <- round(coef_LR,4)
+
+# Just needs to be rounded as well in order to achieve 100% agreement at penalty=0 with COR,
+# because the matrix multiplication test  %*%  coef_LR does not reduce to zero but to -4.440892e-16 somehow in R. that messes up signs.
+
+
+#     ##------------------- Prediction -------------------------------------  
+
+      # Instead of rounding the output matrix, the coefficients above are rounded to 4 decimals like w. That makes output = outcomes (any column)
+      output <- test  %*%  coef_LR    
+      LR_output <- as.vector(sign(output))  #NxPredictors %*% Predictorsx1  = Nx1
+      
+
+##----------------------- guessing for now not allowed (PNAS paper) ----------------------------------------------------------------------
+#try out with guessing
 #     for (j in 1:length(LR_output)){  
 #       if (LR_output[j]==0) LR_output[j] <- sign(rnorm(1))  
 #       }
-#     }
+#     
         
-    pred.linear[[i]] <- LR_output
-       
-  }
+#     pred.linear[[i]] <- LR_output  # no guessing
+#        
+#   }
   
-  return(pred.linear)   
+  return(LR_output)   
   
 }
 
 
+
+################# 3b) Throw-out-redundant predictiors: Linear Regression Function ############################################
+##
+# y.pos <- ncol(dataset)
+
+Linear.regression.cleaned <- function(x, y, test, Predictors, labels) 
+{
+  
+    # k loop is outside of function
+   # X matrix is already the matrix of predictors after redundant predictors have been thrown out
+
+    X <- x
+    Y <- y 
+    
+    
+    ##---------------------- Fitting------ solve works because there is no more mutlicollinearity    
+    coef_LR <- solve(t(X)%*%X) %*% (t(X)%*%Y)
+  
+    #     fit <- lm.fit(X,Y)   # does not use intercept!
+    #     coef_LR <-fit$coefficients # lm.fit$coefficients are usually the same as lm$coefficients, but not for NA cases!
+    #     ##------------------- Prediction -------------------------------------
+    LR_output <- as.vector(sign(test  %*%  coef_LR))  #NxPredictors %*% Predictorsx1  = Nx1
+    
+    
+    #------------ Works with NA: LR coefficients like above --------------------
+    
+    #     fmla <- paste("dependent ~ ", paste(labels, collapse= "+"), paste(" -1"))
+    #     LR_output <- as.vector(sign(predict(lm(fmla, data = trainset), newdata = testset[ ,-y.pos])))
+    
+   
+ 
+  # return vector into outside list element
+  return(LR_output)   
+  
+}
 
 
 #############       4.) Regression Prediction Graph (accuracies)########################
@@ -596,29 +628,13 @@ accordance <- function(predictions.heuristic, predictions.regularized){
 
 
 ########## 9.) Tallying Learning Function ##############################
-##
 
 #y.pos <- ncol(dataset)
 
-tallying.learning <- function(dataset, cv, y.pos , Predictors)
+tallying.learning <- function(trainset, test, Predictors)
 { 
 #   
-  #  number k of different test sets
-  k <- nrow(cv) 
-  
-  ## 	initiate empty lists
-  pred.tallying <- vector('list', k)
-  null.pos <- vector('list', k)
-  for (i in 1:k){
-    
-    ####  Fitting Training Data (get unit weights) ###################################
-    trainset <- dataset[cv[i,]==1, ] 
-    testset <- dataset[cv[i,]==0, ]   
-    test <- as.matrix(testset[ ,-y.pos]) #  without dependent
-    
-#   this is a special case of the test below
-#     indifferent <- apply(test,1,function(x) identical(as.vector(x),rep(0,Predictors)) )
-#     test <- test[!indifferent, ] 
+
 
     cue_validities_raw <- vector('numeric', Predictors) 
     cue_validities <- vector('numeric', Predictors)
@@ -629,14 +645,10 @@ tallying.learning <- function(dataset, cv, y.pos , Predictors)
         cue_validities_raw[c] <- sum(trainset[,c]==trainset[ ,ncol(trainset)])/(sum(trainset[,c]==1)+sum(trainset[,c]==-1))              
         cue_validities[c] <- cue_validities_raw[c] - 0.50    
     }
+      
+    # the validities - 0.50 are automatically same sign as regression betas 
+    unitweights <- sign(cue_validities)      # make sure they are ROUNDED to 4 DECIMALS AS WELL.
     
-    # the validities - 0.50 are automatically same sign as regression betas
-    unitweights <- sign(cue_validities) 
-
-# delete ties AFTER matrix multiplication with unit weights
-#     null_pos <- which((test %*% unitweights) == 0) # indexes of null positions
-#     test <- test[-null_pos, ] # delete all the null positions
-#     
     
   ############ Prediction Tallying (Testdata) ###########################################    
    
@@ -644,23 +656,16 @@ tallying.learning <- function(dataset, cv, y.pos , Predictors)
     tl_predict <- sign(test %*% unitweights)
 
 # THE 0 CASES HAVE TO BE DELETED FROM OTHER MODELS TOO!
-#     ## if the sum of all cue differences is still 0, then guess, different each time!!
+    ## if the sum of all cue differences is still 0, then guess, different each time!!
 #     for (j in 1:length(tl_predict)){  
 #       if ( tl_predict[j]==0)
 #       {
 #         tl_predict[j] <- sign(rnorm(1))
 #       }
 #     }   ## all +1 and -1 now!
-       
-    # feed vector for one testset into predictions list
-    pred.tallying[[i]] <-  as.vector(tl_predict)
-    #null.pos[[i]] <- null_pos
- 
-  }  
- 
-  AllList <- list(pred.tallying=pred.tallying)
+
   
-  return(AllList)
+  return(tl_predict)
 
 }
 
@@ -702,39 +707,15 @@ tallying.graph <- function(predictions.tallying, test.labels)
 #### 10. TTB Learning Function ##########################################################################
 
 
-# data <- paired_data
-#  y.pos <- ncol(paired_data)
+#trainset <- dataset
 
-ttb.predictions <- function(dataset, cv, y.pos, Predictors)
+ttb.predictions <- function(trainset, test,  Predictors)
 {
-  ##   This function is called to derive the predictions for Take-the-Best 
-  ## Arguments:
-  ##
-  ## dataset   	dataset is data frame of current environment with n rows = data points
-  ## cv 	  	  a binary matrix with k x n; k rows correspond to 
-  ##			      different test and training set separations, 
-  ##			      n columns correspond to the n data points in the dataset
-  ## y.pos 		  integer indicating which of the columns in dataset 
-  ##			      contains the binary dependant of the data points (0/1)
+ 
   
-  #  number k of different test sets
-  k <- nrow(cv) 
-  
-  ## 	initiate empty lists
-  pred.ttb <- vector('list', k) # because we have several test sets here
-  
-  #-------------------------- get the cue validities and order (Trainset) ---------------------------------------
-  for (i in 1:k){
+  # trainset[ ,ncol(trainset)] still has y variable in it
     
-    ####  Fitting Training Data (get unit weights) ###################################
-    trainset <- dataset[cv[i,]==1, ] 
-    testset <- dataset[cv[i,]==0, ]   
-    test <- as.matrix(testset[ ,-y.pos]) #  without dependent
-    
-#     # the actual test items used by the other models for prediction:
-#     indifferent <- apply(test,1,function(x) identical(as.vector(x),rep(0,Predictors)) )
-#     test <- test[!indifferent, ] 
-#     
+  
     cue_validities_raw <- vector('numeric', Predictors) 
     cue_validities <- vector('numeric', Predictors)
     for (c in 1:Predictors){
@@ -744,36 +725,38 @@ ttb.predictions <- function(dataset, cv, y.pos, Predictors)
         cue_validities_raw[c] <- sum(trainset[,c]==trainset[ ,ncol(trainset)])/(sum(trainset[,c]==1)+sum(trainset[,c]==-1))              
       cue_validities[c] <- cue_validities_raw[c] - 0.50    
     }
-    # the validities - 0.50 are automatically same sign as regression betas   
+ 
+    # despite epsilon, rounding to 4 prevents order being different for the exact same looking cue validity
+    # this ensures that first comes first rule applies here too, like in the TTB decision rule 
+    cue_validities <- round(cue_validities, 4)
     
-    
-  # now absolute order
+  
     cue_order <- order(abs(cue_validities), decreasing = TRUE)
+    ## if two are the same, order chooses the first element, i.e., the one earlier in the vector.
+  
     
     ############ PREDICTING TESTDATA WITH TTB (PREDICTION) ###########################################      
-  
-    ttb_predict <- vector("numeric",nrow(test))   
+    ttb_predict <- rep(1,nrow(test))   
     for(r in 1:nrow(test)){
       v <- 1
       # circulates through elements 1:5 of cue_order in order of abs. vailidity 
       while (test[r,cue_order[v]]== 0){            
         
         if (v == length(cue_order)){ 
-          ttb_predict[r] <- 0 # TTB guesses 
-          #stop('The test data set still includes ties!')   
+          ttb_predict[r] <- 0 #sign(rnorm(1)) #0 if no cue discriminates, guess between A(+1) and B(-1) 
           break  
         }       
         v <- v + 1  # go to the next element in the cue_order
         
       } # while loop only breaks when test ~= 0 , and then the loop is halted completely!!!
       
-      if (test[r,cue_order[v]]== 1 & cue_validities[cue_order[v]] >= 0){           
+      if (test[r,cue_order[v]]== 1 & cue_validities[cue_order[v]] > 0){           
         ttb_predict[r] <- 1  # prediction is sign
         
       } else if (test[r,cue_order[v]]== 1 & cue_validities[cue_order[v]] < 0){ 
         ttb_predict[r] <- -1  # 
         
-      } else if (test[r,cue_order[v]]== -1 & cue_validities[cue_order[v]] >= 0){
+      } else if (test[r,cue_order[v]]== -1 & cue_validities[cue_order[v]] > 0){
         ttb_predict[r] <- -1 #
         
       } else if (test[r,cue_order[v]]== -1 &  cue_validities[cue_order[v]] < 0){
@@ -781,11 +764,8 @@ ttb.predictions <- function(dataset, cv, y.pos, Predictors)
       }
     } # end of r loop
 
-    pred.ttb[[i]] <- ttb_predict # vector of length testset
-    
-  } # end of k for loop
-  
-  return(pred.ttb) # return the whole list with 20 elements
+   
+  return(ttb_predict) # return the whole list with 20 elements
   
 } # end of function
 
