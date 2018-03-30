@@ -1,4 +1,4 @@
 # BayesianHeuristics
 
 
-Simulation Data Sets (Parpart, Jones & Love, 2015)
+Heuristics as Bayesian inference under extreme priors (Parpart, Jones & Love, 2017)
